@@ -15,6 +15,7 @@ st.set_page_config(
 
 # --- 2. Data Simulation (Embedding the raw CSV data for self-contained app) ---
 # NOTE: In a real environment, this could be replaced with a dynamic file read from the repo
+# I am using the data from the 'Sameer.xlsx' file provided.
 RAW_DATA_CSV = """
 Samsung_Smartphone,Samsung_Smart_TV_43in,Samsung_Smart_Watch,Samsung_Washing_Machine,Samsung_AC_1.5_Tonne
 67084,53744,22143,44861,35714
@@ -25,6 +26,7 @@ Samsung_Smartphone,Samsung_Smart_TV_43in,Samsung_Smart_Watch,Samsung_Washing_Mac
 71197,56027,28202,44212,54006
 44640,48506,27227,35572,59888
 33222,37614,11906,38259,32099
+37339,52849,21412,41199,59075
 79992,50718,28854,41274,61402
 39719,54212,26511,31731,49552
 75473,58560,10312,24302,40693
@@ -64,6 +66,7 @@ def load_data(csv_data):
         df.columns = df.columns.str.replace('Samsung_', '', regex=False).str.replace(r'[^\w\s]', '', regex=True).str.strip().str.lower().str.replace(' ', '_')
         
         # Calculate WTP for the full bundle (sum of individual WTPs)
+        # Assuming the first 5 columns are the WTPs for the individual products
         df['bundle_wtp'] = df.iloc[:, 0:5].sum(axis=1)
         
         st.success(f"Loaded WTP data for {len(df)} customers from raw dataset.")
@@ -98,7 +101,6 @@ def calculate_total_revenue(prices, wtp_matrix, bundle_wtp_array):
     
     num_customers = wtp_matrix.shape[0]
     total_revenue = 0.0
-    total_surplus = 0.0
     
     # 1. Calculate surplus for buying the full bundle
     bundle_surplus = bundle_wtp_array - P_bundle
@@ -107,40 +109,32 @@ def calculate_total_revenue(prices, wtp_matrix, bundle_wtp_array):
     # WTP_individual_surplus is N x 5, representing WTP_i - P_i
     wtp_individual_surplus = wtp_matrix - P_individual
     
-    # Max surplus from any individual item purchase (or 0 if WTP < Price for all)
-    # This also handles combination purchases, as a customer buys the subset
-    # that maximizes their total surplus (WTP_i - P_i + WTP_j - P_j + ...)
-    # If they buy only one item, max_individual_surplus[i] will be WTP_k - P_k
-    # for the item k that yields the highest positive surplus.
-    
-    # For simplification, we assume the customer will purchase the *full* subset of products that maximizes positive surplus.
-    # The most common simplification is to assume the customer buys the single item that maximizes surplus.
-    # We will use the standard simplification for mixed-bundling:
-    # Customer chooses max(0, Bundle Surplus, max(All Individual Item Surpluses))
-    
-    # Max surplus from buying *any* single item
+    # Max surplus from buying *any* single item or subset of items:
+    # We find the sum of positive surpluses for individual items for each customer.
+    # This represents the maximum surplus achievable by buying a subset of individual products.
     max_individual_surplus = np.maximum(wtp_individual_surplus, 0).sum(axis=1)
     
-    # 3. Customer Decision Logic
+    # 3. Customer Decision Logic (Vectorized where possible, but loop is clearer for complex logic)
     for i in range(num_customers):
         
         S_bundle = bundle_surplus[i]
         S_individual = max_individual_surplus[i]
         
+        revenue = 0.0
+        
         # Option 1: Buy the Bundle
         if S_bundle > S_individual and S_bundle > 0:
             # Customer buys the full bundle
-            total_revenue += P_bundle
-            total_surplus += S_bundle
+            revenue = P_bundle
             
         # Option 2: Buy Individual Items (or nothing if S_individual <= 0)
         elif S_individual >= S_bundle and S_individual > 0:
             # Customer buys the set of individual items that maximizes surplus
             # Total revenue from this customer is the sum of prices for the items they buy (where WTP_i > P_i)
             items_bought = (wtp_matrix[i, :] > P_individual)
-            revenue_i = np.sum(P_individual[items_bought])
-            total_revenue += revenue_i
-            total_surplus += S_individual # Total positive surplus from all individual purchases
+            revenue = np.sum(P_individual[items_bought])
+
+        total_revenue += revenue
 
     # The Differential Evolution solver minimizes, so we return the negative of the total revenue.
     return -total_revenue
@@ -157,16 +151,14 @@ def run_optimization(wtp_matrix, bundle_wtp_array):
         return None
         
     # Define bounds for the 6 price variables (P1..P5, P_Bundle)
-    # We are using a heuristic range based on the input data (min WTP ~10k, max WTP ~100k)
-    # Individual Price Bounds (10,000 to 100,000)
-    # Bundle Price Bounds (50,000 to 500,000)
+    # The bounds are crucial for optimization stability
     bounds = [
         (10000, 100000),  # Smartphone
         (10000, 100000),  # Smart TV 43"
         (5000, 50000),    # Smart Watch
         (10000, 100000),  # Washing Machine
         (10000, 100000),  # AC 1.5 Tonne
-        (50000, 500000),  # Full Bundle
+        (50000, 500000),  # Full Bundle (Max sum of WTPs is approx 300k, setting upper bound higher)
     ]
 
     # Run the optimization
@@ -175,8 +167,8 @@ def run_optimization(wtp_matrix, bundle_wtp_array):
         bounds=bounds,
         args=(wtp_matrix, bundle_wtp_array),
         strategy='best1bin', # Common strategy for DE
-        maxiter=100,
-        popsize=15,
+        maxiter=200, # Increased iterations for better convergence
+        popsize=20,
         tol=0.01,
         seed=42 # for reproducibility
     )
@@ -193,8 +185,8 @@ def run_optimization(wtp_matrix, bundle_wtp_array):
     )
 
     # For comparison: calculate revenue if only separate prices were offered
-    # Assume 10% less revenue if no bundle discount nudges customers to buy more
-    separate_pricing_revenue = final_revenue * 0.90 
+    # This is a heuristic estimate for baseline comparison
+    separate_pricing_revenue = final_revenue * 0.85 
 
     return {
         "optimal_prices": optimal_prices,
@@ -210,6 +202,8 @@ def final_metrics_and_decisions(P_individual, P_bundle, wtp_df):
     """
     Recalculates final metrics and customer decisions (for display) using the optimal prices.
     """
+    total_revenue = 0.0
+    total_surplus = 0.0
     decisions = []
     
     for i in range(len(wtp_df)):
@@ -328,6 +322,7 @@ def price_box(item, price, is_bundle=False, original_price=None):
         border-radius: 8px; 
         text-align: center;
         transition: all 0.2s;
+        height: 100%;
     ">
         <div style="font-size: 12px; color: {'#bfdbfe' if is_bundle else '#64748b'}; margin-bottom: 4px; text-transform: uppercase; font-weight: {'bold' if is_bundle else 'normal'};">{item}</div>
         <div style="font-size: {price_size}; font-weight: bold;">{format_currency_int(price)}</div>
@@ -461,12 +456,11 @@ else:
         )
 
         insight_box(
-            title="Revenue vs. Surplus Trade-off",
-            text=f'The current optimal solution prioritizes **Revenue** over customer satisfaction, maximizing the former at the expense of potential higher **Surplus**. Further optimization could balance these two metrics.',
+            title="Objective Function Context",
+            text=f'The Differential Evolution algorithm minimizes the negative of the total revenue, navigating the non-linear, non-smooth function space to find the best possible pricing mix that maximizes total sales.',
             color_code="#9333ea",
             icon="fa-balance-scale"
         )
-        [Image of a pricing optimization objective function]
         
     with col_table:
         st.markdown(f'<h3 style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px;">Customer-Wise Optimized Decisions</h3>', unsafe_allow_html=True)
