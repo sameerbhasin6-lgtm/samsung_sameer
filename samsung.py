@@ -14,8 +14,7 @@ st.set_page_config(
 )
 
 # --- 2. Data Simulation (Embedding the raw CSV data for self-contained app) ---
-# NOTE: In a real environment, this could be replaced with a dynamic file read from the repo
-# I am using the data from the 'Sameer.xlsx' file provided.
+# NOTE: This data is sourced from the 'Sameer.xlsx' file provided.
 RAW_DATA_CSV = """
 Samsung_Smartphone,Samsung_Smart_TV_43in,Samsung_Smart_Watch,Samsung_Washing_Machine,Samsung_AC_1.5_Tonne
 67084,53744,22143,44861,35714
