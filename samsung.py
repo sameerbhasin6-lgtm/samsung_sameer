@@ -185,6 +185,7 @@ def run_optimization(wtp_matrix, bundle_wtp_array):
 
     # For comparison: calculate revenue if only separate prices were offered
     # This is a heuristic estimate for baseline comparison
+    # In a real model, this would be an actual calculation, but for simplicity:
     separate_pricing_revenue = final_revenue * 0.85 
 
     return {
@@ -381,7 +382,7 @@ else:
     st.markdown("---")
 
 
-    # --- KPI Section ---
+    # --- KPI Section (FIXED STRUCTURE) ---
     col1, col2 = st.columns(2)
 
     with col1:
@@ -401,8 +402,9 @@ else:
             icon="fa-smile",
             color_classes="from-green-600 to-green-700 bg-gradient-to-r"
         )
+    
+    st.markdown("---")
 
-    st.markdown("<br>", unsafe_allow_html=True)
 
     # --- Optimal Price List Section ---
     st.markdown(f'<h3 style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px;">Optimal Price List (Combo & Individual)</h3>', unsafe_allow_html=True)
