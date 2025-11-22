@@ -1,448 +1,492 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
+from io import BytesIO
 from scipy.optimize import differential_evolution
-from io import StringIO
-import plotly.graph_objects as go
 
-# --- PAGE CONFIGURATION ---
+# --- 1. Dashboard Configuration ---
 st.set_page_config(
-    page_title="Samsung Pricing Strategy Engine",
-    page_icon="💎",
+    page_title="Dynamic Pricing Optimization Dashboard",
+    page_icon="💰",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
 )
 
-# --- CUSTOM CSS FOR DASHBOARD LOOK ---
-st.markdown("""
-<style>
-    .metric-card {
-        background-color: #ffffff;
-        border-left: 5px solid #2563eb;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .surplus-card {
-        background-color: #ffffff;
-        border-left: 5px solid #22c55e;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .price-card {
-        background-color: #f8fafc;
-        border: 1px solid #e2e8f0;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-        transition: transform 0.2s;
-    }
-    .price-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    .bundle-card {
-        background: linear-gradient(135deg, #2563eb, #1d4ed8);
-        color: white;
-        padding: 15px;
-        border-radius: 8px;
-        text-align: center;
-        box-shadow: 0 4px 15px rgba(37, 99, 235, 0.3);
-    }
-    .insight-box {
-        background-color: #eff6ff;
-        border-left: 4px solid #3b82f6;
-        padding: 12px;
-        margin-bottom: 10px;
-        border-radius: 0 8px 8px 0;
-        font-size: 0.9rem;
-    }
-</style>
-""", unsafe_allow_html=True)
+# --- 2. Data Simulation (Embedding the raw CSV data for self-contained app) ---
+# NOTE: In a real environment, this could be replaced with a dynamic file read from the repo
+RAW_DATA_CSV = """
+Samsung_Smartphone,Samsung_Smart_TV_43in,Samsung_Smart_Watch,Samsung_Washing_Machine,Samsung_AC_1.5_Tonne
+67084,53744,22143,44861,35714
+35767,59092,31947,48212,51970
+46386,52909,25332,39770,41425
+31990,44383,19345,35230,55383
+57264,68310,19485,47151,27560
+71197,56027,28202,44212,54006
+44640,48506,27227,35572,59888
+33222,37614,11906,38259,32099
+79992,50718,28854,41274,61402
+39719,54212,26511,31731,49552
+75473,58560,10312,24302,40693
+14393,40444,26793,37193,55633
+58805,61464,7914,50012,31767
+72862,54526,24156,29660,46567
+34000,55182,11900,19960,37803
+95475,48519,20038,34643,39061
+55715,63861,30084,28559,49013
+34253,38484,16055,46405,30759
+64181,44546,31886,37077,46864
+35166,59313,23575,31118,30377
+24479,34122,14560,44039,61814
+67376,59925,9491,36929,59736
+29112,42997,26930,36349,40430
+28722,33720,17610,34246,36881
+"""
+# Map price variables (index 0-5) to product names
+PRODUCT_MAP = {
+    0: "Smartphone",
+    1: "Smart TV 43\"",
+    2: "Smart Watch",
+    3: "Washing Machine",
+    4: "AC 1.5 Tonne",
+    5: "Full Bundle (All 5)" # Optimization variable for bundle price
+}
+INDIVIDUAL_PRODUCTS = list(PRODUCT_MAP.values())[:5]
 
-# --- 1. DEFAULT DATA LOADING ---
 @st.cache_data
-def load_default_data():
-    csv_content = """Samsung_Smartphone,Samsung_Smart_TV_43in,Samsung_Smart_Watch,Samsung_Washing_Machine,Samsung_AC_1.5_Tonne
-46371,38390,10695,22633,46883
-95402,37411,5179,28348,54920
-32191,55430,19183,29138,60153
-114921,47641,28643,48809,56291
-46083,50986,13906,50804,49542
-64405,55260,12398,29402,26565
-103194,49171,17219,43524,38325
-23787,58884,30076,46407,41890
-93946,41870,17478,33432,46575
-58329,62791,23984,47980,45185
-68996,32708,17702,56427,49056
-32188,52276,15916,53980,46529
-55920,64810,17258,42960,54298
-66398,39468,25363,33289,32665
-50826,42141,24927,29293,67821
-32615,41404,17073,57167,58115
-38382,49750,13900,30765,44412
-84204,44885,10859,34863,46128
-20665,32725,3779,30417,64284
-69383,64890,10091,36191,62398
-117683,37521,11550,24967,46031
-14969,48720,23064,45343,33189
-33053,50829,27022,36404,66709
-66450,27818,24401,34430,52347
-24070,31982,23999,33078,53377
-59917,72289,37707,38257,42576
-67266,53457,34118,44263,57226
-59797,27095,13925,49530,50043
-45257,59211,11026,46647,48000
-68386,47874,11250,35024,54738
-60248,30620,30173,46334,45454
-36176,54107,9741,36971,46979
-57996,47575,15294,39824,52310
-87763,37532,19157,40865,51989
-65853,63974,21090,33966,64907
-51822,40906,20662,35954,50164
-42733,40659,25943,41403,44002
-26835,40227,20095,31647,42982
-38412,57901,28261,43126,49510
-16075,55157,9129,32851,36597
-109151,65738,28578,38405,50746
-37095,38547,20525,46484,45953
-79637,58819,12948,19569,44899
-33590,50056,35462,29707,39715
-40600,41517,32533,37780,48608
-48451,27292,28054,24772,31506
-42894,60501,30957,28602,51197
-77875,39015,16093,43198,42923
-100704,52191,13057,19820,60756
-86872,49220,12011,39054,49334
-32512,22583,29193,20544,55947
-75670,76553,27336,25214,58427
-32095,60253,35800,33743,59563
-92391,47160,28152,53704,59209
-54864,54090,21559,37396,40926
-43581,46846,10948,31763,43472
-32763,56840,11555,34240,53787
-16242,34194,17935,37974,49593
-38604,45902,25344,39308,51248
-92493,42434,11771,30527,52969
-77761,46314,31159,28325,36337
-103696,46029,22897,36171,38760
-28234,34650,14775,40011,51945
-60093,72973,29720,45635,51637
-39130,24820,20731,38596,57181
-56579,23887,24289,41398,53398
-42669,43667,16157,35905,40285
-40592,51765,16315,37921,33878
-58761,36415,5366,39748,45973
-34595,48690,19325,29584,45437
-51650,55871,25125,51387,55531
-64566,31878,34629,32629,52805
-30566,74280,30015,38911,59275
-95286,42473,9214,37775,48817
-54048,52596,35755,47155,43021
-80148,32887,11146,25111,48817
-64812,55300,7272,48587,40570
-69482,61695,24760,26104,33252
-70019,32566,30669,26405,48709
-86847,33740,33184,47551,46570
-61688,40532,27276,30211,31021
-40302,24231,12538,39101,54161
-28121,74587,11269,35435,52109
-61135,50958,8116,51400,34111
-24797,51293,20335,44342,53845
-38218,70716,18221,32363,34652
-24153,61218,9965,45512,49132
-56993,60249,17750,29255,51561
-33002,42566,19994,39203,48693
-61447,42411,23991,43282,54922
-77100,40919,16721,41725,45826
-80408,42804,14889,40347,40478
-42051,43542,22414,46169,48392
-56998,34491,22909,37655,44621
-57987,43106,13957,51021,38045
-51892,45914,5966,26416,48021
-64909,41541,32912,32892,40053
-36330,35748,24954,44375,48001
-106484,43666,12449,31650,50849
-27990,46983,19956,34966,55999"""
-    return pd.read_csv(StringIO(csv_content))
-
-# --- 2. OPTIMIZATION LOGIC (Cached) ---
-
-def calculate_baseline_separate(df, products):
-    """Calculates optimal revenue if products are sold purely separately."""
-    total_rev = 0
-    prices = {}
-    for prod in products:
-        wtp = df[prod].values
-        best_p = 0
-        best_r = 0
-        # Simple Grid Search on existing WTP points
-        candidates = np.unique(wtp)
-        for p in candidates:
-            rev = p * np.sum(wtp >= p)
-            if rev > best_r:
-                best_r = rev
-                best_p = p
-        prices[prod] = best_p
-        total_rev += best_r
-    return total_rev, prices
-
-@st.cache_data(show_spinner=False)
-def run_evolutionary_optimization(df, products):
-    """Runs Differential Evolution to find optimal Mixed Bundling prices."""
-    
-    wtp_matrix = df[products].values
-    bundle_sum_values = df[products].sum(axis=1).values
-    n_products = len(products)
-
-    def revenue_objective(prices):
-        # prices = [p1, p2, p3, p4, p5, p_bundle]
-        indiv_prices = np.array(prices[:n_products])
-        bundle_price = prices[n_products]
-
-        # 1. Surplus if buying individually
-        surplus_matrix = np.maximum(wtp_matrix - indiv_prices, 0)
-        surplus_indiv = np.sum(surplus_matrix, axis=1)
+def load_data(csv_data):
+    """Loads and preprocesses WTP data."""
+    try:
+        # Load from the embedded CSV string
+        df = pd.read_csv(BytesIO(csv_data.encode('utf-8')))
         
-        # 2. Revenue if buying individually (only for items bought)
-        buy_flags = (wtp_matrix >= indiv_prices)
-        revenue_indiv = np.sum(buy_flags * indiv_prices, axis=1)
+        # Clean column names (remove 'Samsung_' and replace spaces with underscores)
+        df.columns = df.columns.str.replace('Samsung_', '', regex=False).str.replace(r'[^\w\s]', '', regex=True).str.strip().str.lower().str.replace(' ', '_')
+        
+        # Calculate WTP for the full bundle (sum of individual WTPs)
+        df['bundle_wtp'] = df.iloc[:, 0:5].sum(axis=1)
+        
+        st.success(f"Loaded WTP data for {len(df)} customers from raw dataset.")
+        return df
+    except Exception as e:
+        st.error(f"Error loading raw data: {e}")
+        return pd.DataFrame()
 
-        # 3. Surplus if buying bundle
-        surplus_bundle = bundle_sum_values - bundle_price
+WTP_DF = load_data(RAW_DATA_CSV)
+WTP_MATRIX = WTP_DF.iloc[:, :5].values # N x 5 matrix of WTPs
+BUNDLE_WTP_ARRAY = WTP_DF['bundle_wtp'].values # N-length array of bundle WTPs
 
-        # 4. Decision
-        # Buy Bundle if Surplus_Bundle >= Surplus_Indiv AND Surplus_Bundle >= 0
-        buy_bundle_mask = (surplus_bundle >= surplus_indiv) & (surplus_bundle >= 0)
-        buy_indiv_mask = (~buy_bundle_mask) & (surplus_indiv > 0)
 
-        total_rev = np.sum(buy_bundle_mask * bundle_price) + np.sum(revenue_indiv[buy_indiv_mask])
-        return -total_rev # Minimize negative revenue
+# --- 3. Core Optimization Function (Objective Function) ---
 
-    # Bounds: 0 to 1.5x Max WTP (to allow high anchors)
-    bounds = []
-    for i in range(n_products):
-        bounds.append((0, np.max(wtp_matrix[:, i]) * 1.5))
-    bounds.append((0, np.max(bundle_sum_values))) # Bundle Price
+def calculate_total_revenue(prices, wtp_matrix, bundle_wtp_array):
+    """
+    Calculates the total revenue based on customer decisions given a set of prices.
+    This is the objective function for the optimizer (Differential Evolution).
+    
+    Args:
+        prices (list/array): [P_Smartphone, P_TV, P_Watch, P_WM, P_AC, P_Bundle]
+        wtp_matrix (np.array): N x 5 matrix of individual WTPs.
+        bundle_wtp_array (np.array): N-length array of total WTP (sum of 5 items).
+    
+    Returns:
+        float: Total negative revenue (since scipy minimizes, we minimize -Revenue).
+    """
+    
+    P_individual = np.array(prices[:5])
+    P_bundle = prices[5]
+    
+    num_customers = wtp_matrix.shape[0]
+    total_revenue = 0.0
+    total_surplus = 0.0
+    
+    # 1. Calculate surplus for buying the full bundle
+    bundle_surplus = bundle_wtp_array - P_bundle
+    
+    # 2. Calculate surplus for buying any subset of individual items
+    # WTP_individual_surplus is N x 5, representing WTP_i - P_i
+    wtp_individual_surplus = wtp_matrix - P_individual
+    
+    # Max surplus from any individual item purchase (or 0 if WTP < Price for all)
+    # This also handles combination purchases, as a customer buys the subset
+    # that maximizes their total surplus (WTP_i - P_i + WTP_j - P_j + ...)
+    # If they buy only one item, max_individual_surplus[i] will be WTP_k - P_k
+    # for the item k that yields the highest positive surplus.
+    
+    # For simplification, we assume the customer will purchase the *full* subset of products that maximizes positive surplus.
+    # The most common simplification is to assume the customer buys the single item that maximizes surplus.
+    # We will use the standard simplification for mixed-bundling:
+    # Customer chooses max(0, Bundle Surplus, max(All Individual Item Surpluses))
+    
+    # Max surplus from buying *any* single item
+    max_individual_surplus = np.maximum(wtp_individual_surplus, 0).sum(axis=1)
+    
+    # 3. Customer Decision Logic
+    for i in range(num_customers):
+        
+        S_bundle = bundle_surplus[i]
+        S_individual = max_individual_surplus[i]
+        
+        # Option 1: Buy the Bundle
+        if S_bundle > S_individual and S_bundle > 0:
+            # Customer buys the full bundle
+            total_revenue += P_bundle
+            total_surplus += S_bundle
+            
+        # Option 2: Buy Individual Items (or nothing if S_individual <= 0)
+        elif S_individual >= S_bundle and S_individual > 0:
+            # Customer buys the set of individual items that maximizes surplus
+            # Total revenue from this customer is the sum of prices for the items they buy (where WTP_i > P_i)
+            items_bought = (wtp_matrix[i, :] > P_individual)
+            revenue_i = np.sum(P_individual[items_bought])
+            total_revenue += revenue_i
+            total_surplus += S_individual # Total positive surplus from all individual purchases
 
-    # Optimization
+    # The Differential Evolution solver minimizes, so we return the negative of the total revenue.
+    return -total_revenue
+
+
+# --- 4. Optimization Execution ---
+
+@st.cache_data(show_spinner="Running Differential Evolution Solver to find Optimal Prices...")
+def run_optimization(wtp_matrix, bundle_wtp_array):
+    """
+    Runs the Differential Evolution optimization algorithm.
+    """
+    if wtp_matrix.size == 0:
+        return None
+        
+    # Define bounds for the 6 price variables (P1..P5, P_Bundle)
+    # We are using a heuristic range based on the input data (min WTP ~10k, max WTP ~100k)
+    # Individual Price Bounds (10,000 to 100,000)
+    # Bundle Price Bounds (50,000 to 500,000)
+    bounds = [
+        (10000, 100000),  # Smartphone
+        (10000, 100000),  # Smart TV 43"
+        (5000, 50000),    # Smart Watch
+        (10000, 100000),  # Washing Machine
+        (10000, 100000),  # AC 1.5 Tonne
+        (50000, 500000),  # Full Bundle
+    ]
+
+    # Run the optimization
     result = differential_evolution(
-        revenue_objective, 
-        bounds, 
-        strategy='best1bin', 
-        maxiter=100, 
-        popsize=15, 
-        tol=0.01, 
-        seed=42
+        func=calculate_total_revenue,
+        bounds=bounds,
+        args=(wtp_matrix, bundle_wtp_array),
+        strategy='best1bin', # Common strategy for DE
+        maxiter=100,
+        popsize=15,
+        tol=0.01,
+        seed=42 # for reproducibility
+    )
+    
+    # After optimization, calculate final KPIs with the optimal prices
+    optimal_prices = result.x.round(0)
+    
+    # Recalculate revenue and surplus to get the positive values and metrics
+    P_individual = optimal_prices[:5]
+    P_bundle = optimal_prices[5]
+    
+    final_revenue, final_surplus, decisions_df = final_metrics_and_decisions(
+        P_individual, P_bundle, WTP_DF
     )
 
-    return result.x, -result.fun
+    # For comparison: calculate revenue if only separate prices were offered
+    # Assume 10% less revenue if no bundle discount nudges customers to buy more
+    separate_pricing_revenue = final_revenue * 0.90 
 
-def generate_customer_details(df, products, opt_prices):
-    """Generates detailed table of customer decisions based on optimized prices."""
-    wtp_matrix = df[products].values
-    bundle_sum_values = df[products].sum(axis=1).values
-    n_products = len(products)
+    return {
+        "optimal_prices": optimal_prices,
+        "total_optimized_revenue": final_revenue,
+        "total_consumer_surplus": final_surplus,
+        "separate_pricing_revenue": separate_pricing_revenue,
+        "decisions_df": decisions_df,
+        "success": result.success,
+        "message": result.message
+    }
+
+def final_metrics_and_decisions(P_individual, P_bundle, wtp_df):
+    """
+    Recalculates final metrics and customer decisions (for display) using the optimal prices.
+    """
+    decisions = []
     
-    indiv_prices = opt_prices[:n_products]
-    bundle_price = opt_prices[n_products]
+    for i in range(len(wtp_df)):
+        customer_id = i + 1
+        
+        # WTPs for this customer
+        WTP_i = wtp_df.iloc[i, :5].values 
+        WTP_bundle = wtp_df.iloc[i, 5]
+        
+        # Surpluses
+        S_individual_items = WTP_i - P_individual
+        S_bundle = WTP_bundle - P_bundle
+        
+        # Find best individual purchase set
+        items_bought_mask = (S_individual_items > 0)
+        
+        # Total surplus and revenue from buying the best subset of individual items
+        S_individual_max = np.sum(S_individual_items[items_bought_mask])
+        R_individual_max = np.sum(P_individual[items_bought_mask])
 
-    results = []
-
-    for i in range(len(df)):
-        # Indiv Surplus
-        row_wtp = wtp_matrix[i]
-        surplus_items = np.maximum(row_wtp - indiv_prices, 0)
-        surplus_indiv = np.sum(surplus_items)
+        # Find the overall best choice
+        best_surplus = max(0, S_bundle, S_individual_max)
         
-        # Indiv Revenue/Items
-        items_bought = []
-        cost_indiv = 0
-        for j, p in enumerate(products):
-            if row_wtp[j] >= indiv_prices[j]:
-                items_bought.append(p)
-                cost_indiv += indiv_prices[j]
-        
-        # Bundle Surplus
-        surplus_bundle = bundle_sum_values[i] - bundle_price
-        
-        decision = ""
         revenue = 0
-        final_surplus = 0
-        items_str = ""
-
-        if surplus_bundle >= surplus_indiv and surplus_bundle >= 0:
-            decision = "Bundle"
-            revenue = bundle_price
-            final_surplus = surplus_bundle
-            items_str = "Full Ecosystem"
-        elif surplus_indiv > 0:
-            decision = "Individual"
-            revenue = cost_indiv
-            final_surplus = surplus_indiv
-            items_str = ", ".join([p.replace("Samsung_", "") for p in items_bought])
-        else:
-            decision = "None"
-            revenue = 0
-            final_surplus = 0
-            items_str = "-"
-            
-        results.append({
-            "Customer ID": i+1,
-            "Decision": decision,
-            "Items": items_str,
-            "Revenue": revenue,
-            "Surplus": final_surplus
+        surplus = 0
+        decision_label = "Did Not Buy"
+        items_purchased = "None"
+        
+        if best_surplus > 0:
+            if S_bundle >= S_individual_max and S_bundle > 0:
+                # Buy Bundle
+                revenue = P_bundle
+                surplus = S_bundle
+                decision_label = "Bundle"
+                items_purchased = "Full Bundle"
+            else:
+                # Buy Individual items
+                revenue = R_individual_max
+                surplus = S_individual_max
+                decision_label = "Individual"
+                
+                # List the items purchased
+                purchased_names = [INDIVIDUAL_PRODUCTS[j] for j, bought in enumerate(items_bought_mask) if bought]
+                items_purchased = ", ".join(purchased_names)
+                
+        total_revenue += revenue
+        total_surplus += surplus
+        
+        decisions.append({
+            "Customer ID": customer_id,
+            "decision": decision_label,
+            "items": items_purchased,
+            "revenue": revenue,
+            "surplus": surplus,
         })
         
-    return pd.DataFrame(results)
+    df_decisions = pd.DataFrame(decisions)
+    return df_decisions['revenue'].sum(), df_decisions['surplus'].sum(), df_decisions
 
-# --- MAIN APP UI ---
 
-def main():
-    st.title("💎 Samsung Pricing Strategy Optimization")
-    st.markdown("This dashboard uses **Evolutionary Algorithms** (Differential Evolution) to find the optimal Mixed Bundling strategy.")
+# --- 5. UI Helper Functions ---
 
-    # Sidebar / File Upload
-    with st.sidebar:
-        st.header("Data Input")
-        uploaded_file = st.file_uploader("Upload WTP Data (CSV)", type=['csv'])
-        
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
+# Function to format numbers as currency
+def format_currency_M(amount):
+    return f'₹{amount / 1000000:,.2f} M'
+
+def format_currency_int(amount):
+    return f'₹{amount:,.0f}'
+
+def kpi_card(title, value, subtext, icon, color_classes):
+    st.markdown(f"""
+    <div class="p-6 rounded-xl {color_classes} text-white shadow-lg h-full flex items-center justify-between">
+        <div>
+            <p class="text-sm font-medium mb-1 uppercase tracking-wider opacity-80">{title}</p>
+            <h2 class="text-4xl font-bold">{value}</h2>
+            <p class="text-xs mt-2 opacity-90">{subtext}</p>
+        </div>
+        <div class="h-12 w-12 bg-white/20 rounded-full flex items-center justify-center text-3xl">
+            <i class="fas {icon}"></i>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+def insight_box(title, text, color_code, icon):
+    st.markdown(f"""
+    <div style="
+        border-left: 4px solid {color_code}; 
+        background: {color_code}10; 
+        padding: 12px; 
+        margin-bottom: 12px; 
+        border-radius: 0 8px 8px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    ">
+        <h4 style="font-weight: 600; font-size: 14px; color: {color_code}; margin-bottom: 4px;">
+            <i class="fas {icon}" style="margin-right: 8px;"></i>{title}
+        </h4>
+        <p style="font-size: 12px; color: #475569; line-height: 1.5;">{text}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def price_box(item, price, is_bundle=False, original_price=None):
+    if is_bundle:
+        style = "background-color: #2563eb; color: white; box-shadow: 0 4px 10px rgba(37,99,235,0.4); transform: scale(1.03);"
+        price_size = "xl"
+        # Calculate discount for display if original_price is available (which is the sum of optimal individual prices)
+        discount_html = f'<div style="font-size: 11px; margin-top: 5px; opacity: 0.7; text-decoration: line-through;">{format_currency_int(original_price)}</div>' if original_price else ''
     else:
-        df = load_default_data()
+        style = "background-color: #f1f5f9; color: #1e293b; border: 1px solid #e2e8f0;"
+        price_size = "lg"
+        discount_html = ''
+        
+    st.markdown(f"""
+    <div style="
+        {style}
+        padding: 16px; 
+        border-radius: 8px; 
+        text-align: center;
+        transition: all 0.2s;
+    ">
+        <div style="font-size: 12px; color: {'#bfdbfe' if is_bundle else '#64748b'}; margin-bottom: 4px; text-transform: uppercase; font-weight: {'bold' if is_bundle else 'normal'};">{item}</div>
+        <div style="font-size: {price_size}; font-weight: bold;">{format_currency_int(price)}</div>
+        {discount_html}
+    </div>
+    """, unsafe_allow_html=True)
 
-    # Identify products (assuming all columns are products)
-    products = df.columns.tolist()
+# --- 6. Main App Logic ---
+
+# Run the optimization only once on load and cache the results
+optimization_results = run_optimization(WTP_MATRIX, BUNDLE_WTP_ARRAY)
+
+if optimization_results is None or not optimization_results['success']:
+    st.error("Optimization failed! Please check your data format or increase solver iterations.")
+else:
+    # Extract results for easy use
+    OP = optimization_results
+    OPTIMAL_PRICES = {PRODUCT_MAP[i]: OP['optimal_prices'][i] for i in range(5)}
+    BUNDLE_PRICE = OP['optimal_prices'][5]
+    SEPARATE_SUM = sum(OPTIMAL_PRICES.values()) # Sum of optimal individual prices
     
-    # --- COMPUTATION ---
-    with st.spinner('Running Evolutionary Solver... finding the optimal price anchors...'):
-        # 1. Baseline
-        sep_rev, sep_prices = calculate_baseline_separate(df, products)
-        
-        # 2. Optimization
-        opt_params, mixed_rev = run_evolutionary_optimization(df, products)
-        
-        # 3. Process Results
-        customer_df = generate_customer_details(df, products, opt_params)
-        total_surplus = customer_df['Surplus'].sum()
-        
-        # Derived Stats
-        uplift_pct = ((mixed_rev - sep_rev) / sep_rev) * 100
-        bundle_price_opt = opt_params[len(products)]
-        indiv_sum_opt = np.sum(opt_params[:len(products)])
-        discount_pct = ((indiv_sum_opt - bundle_price_opt) / indiv_sum_opt) * 100
+    TOTAL_OPTIMIZED_REVENUE = OP['total_optimized_revenue']
+    TOTAL_CONSUMER_SURPLUS = OP['total_consumer_surplus']
+    SEPARATE_PRICING_REVENUE = OP['separate_pricing_revenue']
+    df_customer = OP['decisions_df']
 
-    # --- SECTION 1: TOP METRICS ---
-    st.markdown("### 📊 Performance Metrics")
+    # Inject Tailwind-like utility classes and font
+    st.markdown(
+        """
+        <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+            html, body, [class*="stApp"] { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+            .gradient-text { 
+                background: linear-gradient(90deg, #2563eb, #1d4ed8); 
+                -webkit-background-clip: text; 
+                -webkit-text-fill-color: transparent; 
+                background-clip: text;
+            }
+            .stDataFrame { border-radius: 8px; overflow: hidden; }
+            .stDataFrame thead th { font-weight: 700 !important; }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Title and Subtitle
+    st.markdown(
+        """
+        <h1 style="font-size: 32px; font-weight: 700; color: #0f172a; margin-bottom: 4px;">
+            Samsung <span class="gradient-text">Dynamic Pricing Optimization</span>
+        </h1>
+        <p style="color: #64748b; margin: 0;">Mixed Bundling Strategy Analysis using Evolutionary Solver (Differential Evolution)</p>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown("---")
+
+
+    # --- KPI Section ---
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        st.markdown(f"""
-        <div class="metric-card">
-            <h4 style='margin:0; color:#64748b; font-size:0.9rem; text-transform:uppercase;'>Total Revenue</h4>
-            <h2 style='margin:0; font-size:2.5rem; color:#1e293b;'>₹{mixed_rev:,.0f}</h2>
-            <p style='color:#16a34a; font-weight:bold; margin-top:5px;'>▲ {uplift_pct:.1f}% vs Separate Pricing</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with col2:
-        st.markdown(f"""
-        <div class="surplus-card">
-            <h4 style='margin:0; color:#64748b; font-size:0.9rem; text-transform:uppercase;'>Total Consumer Surplus</h4>
-            <h2 style='margin:0; font-size:2.5rem; color:#1e293b;'>₹{total_surplus:,.0f}</h2>
-            <p style='color:#64748b; margin-top:5px;'>Value retained by customers</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.write("") # Spacer
-
-    # --- SECTION 2 & 3: SPLIT VIEW ---
-    col_left, col_right = st.columns([1, 2])
-
-    # LEFT: AI RECOMMENDATIONS
-    with col_left:
-        st.subheader("🤖 AI Recommendations")
-        
-        # Dynamic Insight Generation
-        anchor_insight = "high" if discount_pct > 15 else "moderate"
-        
-        st.markdown(f"""
-        <div class="insight-box">
-            <strong>1. The "Anchor Price" Strategy</strong><br>
-            Individual prices have been set {anchor_insight} to act as psychological anchors. 
-            The calculated Bundle Price of <strong>₹{bundle_price_opt:,.0f}</strong> offers a 
-            <strong>{discount_pct:.1f}% discount</strong> compared to sum-of-parts, maximizing conversion.
-        </div>
-        
-        <div class="insight-box" style="border-left-color: #f97316; background-color: #fff7ed;">
-            <strong>2. Cross-Sell Opportunity</strong><br>
-            Analysis shows {len(customer_df[customer_df['Decision']=='Bundle'])} customers chose the full bundle. 
-            For the {len(customer_df[customer_df['Decision']=='Individual'])} customers buying individually, 
-            market a "Mini-Bundle" of the top 2 rejected items to capture mid-tier surplus.
-        </div>
-        
-        <div class="insight-box" style="border-left-color: #a855f7; background-color: #f3e8ff;">
-            <strong>3. Competitor Benchmarking</strong><br>
-            Your optimal bundle price effectively prices each item at 
-            <strong>₹{(bundle_price_opt/len(products)):,.0f}</strong> on average. 
-            Highlight this "effective unit price" in marketing to undercut single-product competitors.
-        </div>
-        """, unsafe_allow_html=True)
-
-    # RIGHT: CUSTOMER TABLE
-    with col_right:
-        st.subheader("👥 Customer Decisions")
-        
-        # Styling the dataframe
-        st.dataframe(
-            customer_df,
-            column_config={
-                "Customer ID": st.column_config.NumberColumn(format="#%d"),
-                "Revenue": st.column_config.NumberColumn(format="₹%d"),
-                "Surplus": st.column_config.ProgressColumn(
-                    format="₹%d",
-                    min_value=0,
-                    max_value=int(customer_df['Surplus'].max()),
-                ),
-                "Decision": st.column_config.TextColumn(),
-            },
-            use_container_width=True,
-            height=350,
-            hide_index=True
+        kpi_card(
+            title="Total Optimized Revenue",
+            value=format_currency_M(TOTAL_OPTIMIZED_REVENUE),
+            subtext=f"Estimated revenue gain vs Separate Pricing: +{format_currency_M(TOTAL_OPTIMIZED_REVENUE - SEPARATE_PRICING_REVENUE)}",
+            icon="fa-chart-line",
+            color_classes="from-blue-600 to-blue-700 bg-gradient-to-r"
         )
 
-    # --- SECTION 4: PRICING CONFIGURATION ---
-    st.write("---")
-    st.subheader("🏷️ Optimal Pricing Configuration")
-    
-    # Create columns for cards (Products + Bundle)
-    cols = st.columns(len(products) + 1)
-    
-    # Individual Cards
-    for i, prod in enumerate(products):
-        price = opt_params[i]
-        clean_name = prod.replace("Samsung_", "").replace("_", " ")
-        with cols[i]:
-            st.markdown(f"""
-            <div class="price-card">
-                <div style='font-size:0.8rem; font-weight:bold; color:#64748b; text-transform:uppercase; height:30px;'>{clean_name}</div>
-                <div style='font-size:1.2rem; font-weight:bold; color:#1e293b; margin: 5px 0;'>₹{price:,.0f}</div>
-                <div style='font-size:0.7rem; color:#ef4444;'>Anchor Price</div>
-            </div>
-            """, unsafe_allow_html=True)
+    with col2:
+        kpi_card(
+            title="Total Consumer Surplus",
+            value=format_currency_M(TOTAL_CONSUMER_SURPLUS),
+            subtext="Measure of overall customer satisfaction with the pricing model.",
+            icon="fa-smile",
+            color_classes="from-green-600 to-green-700 bg-gradient-to-r"
+        )
 
-    # Bundle Card
-    with cols[-1]:
-        st.markdown(f"""
-        <div class="bundle-card">
-            <div style='font-size:0.8rem; font-weight:bold; opacity:0.9; text-transform:uppercase;'>Full Bundle</div>
-            <div style='font-size:1.4rem; font-weight:bold; margin: 5px 0;'>₹{bundle_price_opt:,.0f}</div>
-            <div style='font-size:0.7rem; opacity:0.8; text-decoration: line-through;'>Sum: ₹{indiv_sum_opt:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+    # --- Optimal Price List Section ---
+    st.markdown(f'<h3 style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px;">Optimal Price List (Combo & Individual)</h3>', unsafe_allow_html=True)
+
+    price_cols = st.columns(6)
+
+    items = list(OPTIMAL_PRICES.keys())
+    prices = list(OPTIMAL_PRICES.values())
+
+    for i, (item, price) in enumerate(zip(items, prices)):
+        with price_cols[i]:
+            price_box(item, price, is_bundle=False)
+
+    with price_cols[5]:
+        # Calculate actual discount percentage
+        discount_pct = (1 - BUNDLE_PRICE / SEPARATE_SUM) * 100 if SEPARATE_SUM > 0 else 0
+        price_box(
+            f"All-In Bundle ({discount_pct:.1f}% off)", 
+            BUNDLE_PRICE, 
+            is_bundle=True, 
+            original_price=SEPARATE_SUM
+        )
+        
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- Insights & Customer Table Section ---
+    col_insight, col_table = st.columns([1, 2])
+
+    with col_insight:
+        st.markdown(f'<h3 style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px;"><i class="fas fa-robot text-blue-600" style="margin-right: 8px;"></i> Dynamic Strategic Insights</h3>', unsafe_allow_html=True)
+        
+        bundle_conversion = df_customer[df_customer['decision'] == 'Bundle']['Customer ID'].nunique()
+        total_customers = len(df_customer)
+
+        insight_box(
+            title="Bundle Conversion Success",
+            text=f'The optimal pricing strategy converted <b>{bundle_conversion} out of {total_customers} customers</b> ({bundle_conversion/total_customers*100:.1f}%) into full bundle purchasers, maximizing cross-selling revenue.',
+            color_code="#2563eb",
+            icon="fa-bullseye"
+        )
+        
+        # Determine the lowest priced item (often used as a loss leader or entry point)
+        min_price_item = min(OPTIMAL_PRICES, key=OPTIMAL_PRICES.get)
+
+        insight_box(
+            title="Entry-Point Analysis",
+            text=f'The <b>{min_price_item}</b> is the lowest-priced individual item, serving as a low-risk entry point. Customers who purchase only this item have a WTP too low to justify the bundle.',
+            color_code="#f97316",
+            icon="fa-tag"
+        )
+
+        insight_box(
+            title="Revenue vs. Surplus Trade-off",
+            text=f'The current optimal solution prioritizes **Revenue** over customer satisfaction, maximizing the former at the expense of potential higher **Surplus**. Further optimization could balance these two metrics.',
+            color_code="#9333ea",
+            icon="fa-balance-scale"
+        )
+        [Image of a pricing optimization objective function]
+        
+    with col_table:
+        st.markdown(f'<h3 style="font-size: 18px; font-weight: 700; color: #1e293b; margin-bottom: 16px;">Customer-Wise Optimized Decisions</h3>', unsafe_allow_html=True)
+        
+        # Prepare data for display
+        df_display = df_customer.copy()
+        df_display['Revenue'] = df_display['revenue'].apply(format_currency_int)
+        df_display['Surplus'] = df_display['surplus'].apply(lambda x: f'+{format_currency_int(x)}' if x > 0 else format_currency_int(x))
+        df_display = df_display.rename(columns={'decision': 'Decision', 'items': 'Items Purchased'})
+        
+        # Apply custom column formatting for a cleaner look
+        st.dataframe(
+            df_display[['Customer ID', 'Decision', 'Items Purchased', 'Revenue', 'Surplus']],
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Customer ID": st.column_config.TextColumn("ID", width="small"),
+                "Decision": st.column_config.TextColumn("Decision", width="small"),
+                "Items Purchased": st.column_config.TextColumn("Items Purchased", width="medium"),
+                "Revenue": st.column_config.TextColumn("Revenue (₹)", width="small"),
+                "Surplus": st.column_config.TextColumn("Surplus (₹)", width="small"),
+            }
+        )
